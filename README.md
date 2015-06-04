@@ -7,4 +7,4 @@
 
 # 스터디 자료
 
-[스터디 자료](https://github.com/kpug/akka/tree/master/wiki)
+* [스터디 자료](https://github.com/kpug/akka/tree/master/wiki)
