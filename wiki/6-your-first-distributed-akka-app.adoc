@@ -1,0 +1,571 @@
+== Fault tolerance
+
+:numbered!:
+
+이 장의 내용은:
+
+* An introduction to scaling out
+* Distributing the goticks.com App: frontend, backend로 분리
+* Remoting
+* Testing distributed actor systems.
+
+=== 6.1 Scaling Out
+
+RPC는 P2P 커뮤니케이션에 유용하고 large scale network 에는 message-oriented가 좋다. Akka는 두 경의 장점을 모두 차용해서 두 경우 모두 같은 방식으로 프로그래밍할 수 있도록 제공한다.
+
+==== 6.1.1 Common network terminology
+
+...
+
+==== 6.1.2 Reasons for a distributed programming model
+
+`A Note on Distributed Computing`에 따른 로컬 프로그래밍과 분산 프로그래밍의 다른점:
+
+* Latency: 네트워크가 끼면 시간이 더든다. Traffic, resent packets, intermittent connections 때문에 그렇다.
+* Partial Failure: 분산 시스템에서는 시스템의 모든 파트가 정상인지 확인하는 게 어렵다.
+* Memory Access: 로컬에서는 객체의 레퍼런스를 얻어오는 데 실패할 수 없지만 분산에서는 실패할 수 있다.
+* Concurrency: no one 'owner' of everything, and the above factors mean the plan to interleave operations can go away.
+
+로컬 환경에서 개발 한 것을 분산 환경으로 Scale out하려면 이런 이유로 안된다. 그런데 Akka는 로컬에서도 분산 프로그래밍으로 개발한다(사실이지만 이 무슨 허무개그가 ㅋㅋㅋ).
+
+아래는 이미 배웠다.  이렇게 하면 Multi-Core CPU에도 좋지만 분산 시키기도 좋다:
+
+* Asynchronous interactions
+* Partial failure
+* Shared nothing approach to concurrency
+
+=== 6.2 Scaling Out with Remoting
+
+변경하는 내용:
+
+* Rest Interface는 frontend node에서 실행
+* BoxOffice와 TicketSeller는 backend node에서 실행
+
+==== 6.2.1 Making the GoTicks App Distributed
+
+[source, scala]
+----
+libraryDependencies ++= {
+    val akkaV       = "2.2-M3"
+    val sprayV      = "1.2-M8-SNAPSHOT"
+    Seq(
+        ...
+        "com.typesafe.akka" %% "akka-remote" % akkaV % "test",  // <1>
+        "com.typesafe.akka" %% "akka-multi-node-testkit" % akkaV % "test", // <2>
+        ...
+    )
+}
+----
+<1> 분산 환경에는 `akka-remote`가 필요하다
+<2> 분산 앱을 테스트하려면 `akka-multi-node-testkit`가 필요하다
+
+==== 6.2.2 Remote REPL action
+
+`sbt console`을 이용한다.
+
+===== Backend
+
+backend system에 simple Actor를 띄운다:
+
+[source, scala]
+----
+//// Listing 6.2 REPL commands for loading up Remoting
+
+scala> :paste
+// Entering paste mode (ctrl-D to finish)
+
+val conf = """
+    akka {
+    actor {
+        provider = "akka.remote.RemoteActorRefProvider" // <1>
+    }
+    remote { // <2>
+        enabled-transports = ["akka.remote.netty.tcp"] // <3>
+        netty.tcp { // <4>
+            hostname = "0.0.0.0"
+            port = 2551
+        }
+    }
+}
+"""
+
+//// Listing 6.3 Remoting Config
+
+scala> import com.typesafe.config._
+import com.typesafe.config._
+
+scala> import akka.actor._
+import akka.actor._
+
+scala> val config = ConfigFactory.parseString(conf) // <5>
+config: com.typesafe.config.Config = ....
+
+scala> val backend = ActorSystem("backend", config) // <6>
+[Remoting] Starting remoting
+.....
+[Remoting] Remoting now listens on addresses:
+[akka.tcp://backend@0.0.0.0:2551]
+backend: akka.actor.ActorSystem = akka://backend
+
+//// Listing 6.4 Configuring the Front End Actor
+
+scala> :paste
+// Entering paste mode (ctrl-D to finish)
+
+class Simple extends Actor {
+    def receive = {
+        case m => println(s"received $m!")
+    }
+}
+
+// Exiting paste mode, now interpreting.
+scala> backend.actorOf(Props[Simple], "simple") // <7>
+----
+<1> Select the Remote ActorRef Provider to bootstrap remoting
+<2> the configuration section for remoting
+<3> Enable the TCP transport
+<4> Settings for the TCP transport, the host and port to listen on
+<5> Parse the String into a Config object.
+<6> Create the ActorSystem with the parsed Config object.
+<7> Create the simple actor in the backend actor system with the name "simple"
+
+===== Frontend
+
+터미널을 새로 열고 sbt console로 새 노드를 만든다. 그리고 나서 frontend system을 만들고 Simple Actor의 레퍼런스를 얻어온다. Simple Actor의 URL은 아래와 같다.
+
+image::img/figure-6-3.png[caption="Figure 6.3:", title="Remote Actor Paths"]
+
+frontend:
+
+[source, scala]
+----
+scala> :paste
+// Entering paste mode (ctrl-D to finish)
+
+val conf = """
+akka {
+    actor {
+        provider = "akka.remote.RemoteActorRefProvider"
+    }
+    remote {
+        enabled-transports = ["akka.remote.netty.tcp"]
+        netty.tcp {
+            hostname = "0.0.0.0"
+            port = 2552 // <1>
+        }
+    }
+}
+"""
+
+import com.typesafe.config._
+
+import akka.actor._
+
+val config = ConfigFactory.parseString(conf)
+
+val frontend= ActorSystem("frontend", config)
+[Remoting] Starting remoting
+.....
+[Remoting] Remoting now listens on addresses:
+[akka.tcp://backend@0.0.0.0:2552]
+frontend: akka.actor.ActorSystem = akka://frontend
+
+scala> :paste
+// Entering paste mode (ctrl-D to finish)
+
+val path = "akka.tcp://backend@0.0.0.0:2551/user/simple" // <2>
+
+val simple = frontend.actorSelection(path) // <3>
+
+// Exiting paste mode, now interpreting.
+
+path: String = akka.tcp://backend@0.0.0.0:2551/user/simple
+simple: akka.actor.ActorSelection =
+ActorSelection[Actor[akka.tcp://backend@0.0.0.0:2551/]/user/simple]
+
+scala> simple ! "Hello Remote World!" // <4>
+----
+<1> Run the frontend on a different port than the backend so they can both run on the same machine
+<2> The path to the remote Simple Actor
+<3> Select the actor with an ActorSelection
+<4> Simple Actor에 메시지를 보낸다.
+
+===== Serialization
+
+* Akka는 기본으로 Java Serialization을 사용한다.
+** Serializable is a marker interface and guarantees nothing. You need to verify that it works if you use 'non-standard' constructs.
+* 자세한 것은 part 3에서 다룬다.
+* Akka remote message protocol에는 serializer의 이름을 저장하게 돼 있어서 de-serialize하는 것이 가능하다.
+* case class와 case object는 기본으로 serializable이다.
+
+==== 6.2.3 Remote Lookup
+
+Single Node에서는 RestInterface가 BoxOffice를 직접 만들었지만 Server-Client에서는 BoxOffice는 backend에 만들고 frontend에서는 lookup한다.
+
+===== Single Node
+
+[source, scala]
+----
+trait BoxOfficeCreator { this: Actor => // <1>
+    def createBoxOffice:ActorRef = {  // <2>
+        context.actorOf(Props[BoxOffice], "boxOffice") // <3>
+    }
+}
+
+class RestInterface extends HttpServiceActor with RestApi {
+    def receive = runRoute(routes)
+}
+
+trait RestApi extends HttpService
+              with ActorLogging
+              with BoxOfficeCreator { actor: Actor =>
+    val boxOffice = createBoxOffice
+
+//Snippet from SingleNodeMain
+ val system = ActorSystem("singlenode", config)
+ val restInterface = system.actorOf(Props[RestInterface],
+                                   "restInterface")
+----
+<1> Actor에 mixin할 것 임.
+<2> boxOffice Actor를 resolve하는 코드를 함수로 분리
+<3> Single Note에서는 boxOffice를 즉시 생성한다.
+
+===== Frontend and Backend
+
+SingleNodeMain, FrontendMain, BackendMain용 설정파일을 각각 `singlenode.conf`, `frontend.conf`, `backend.conf` 파일로 아래와 같이 만든다.
+
+[source, hocon]
+----
+backend {
+    host = "0.0.0.0"
+    port = 2552
+    protocol = "akka.tcp"
+    system = "backend"
+    actor = "user/boxOffice"
+}
+----
+
+Backend에 boxOffice actor를 만든다:
+
+[source, scala]
+----
+//Snippet from BackendMain
+
+val config = ConfigFactory.load("backend")
+val system = ActorSystem("backend", config)
+
+system.actorOf(Props[BoxOffice], "boxOffice")
+----
+
+Frontend에서 boxOffice actor를 lookup한다:
+
+[source, scala]
+----
+object RemoteBoxOfficeCreator {
+    val config = ConfigFactory.load("frontend").getConfig("backend")
+    val host = config.getString("host")
+    val port = config.getInt("port")
+    val protocol = config.getString("protocol")
+    val systemName = config.getString("system")
+    val actorName = config.getString("actor")
+}
+
+trait RemoteBoxOfficeCreator extends BoxOfficeCreator { this:Actor =>
+    import RemoteBoxOfficeCreator._
+
+    def createPath:String = {
+        s"$protocol://$systemName@$host:$port/$actorName"
+    }
+
+    override def createBoxOffice = {
+        val path = createPath
+        context.actorOf(Props(classOf[RemoteLookup],path),
+            "lookupBoxOffice")
+    }
+}
+----
+
+에전 Akka에서는 `actorFor`라는 메소드로 remote actor의 ActorRef를 가져왔었지만 deprecated 됐다. `actorFor`가 리턴하는 ActorRef는 로컬 ActorRef랑 다르다:
+
+* Actor가 죽었을 때 다르게 동작한다.
+* An ActorRef returned by actorFor could point to a newly spawned remote actor instance while this was never the case in a local context => 이건 뭔말일까?
+* Remote Actor는 Termination을 Watch할 수 없다(actorSelection으로 가져온 ActorRef는 Watch할 수 있는 것 같은데 무슨 차이지...).
+
+그래서 `actorFor`는 deprecated돼야 한다. RemoteLookup actor를 쓰면 아래와 같은 장점이 있다:
+
+* Backend System이 아직 준비되지 않았거나 Crashed되거나 Restarted되도 괜찮다.
+* boxOffice Actor가 Crashed되거나 Restarted되도 괜찮다.
+* Frontend에서 Actor를 lookup하기 전에 Backend가 준비돼거나, 평생 한번만 lookup해도 되는 상황인 이상적일 뿐이다.
+
+RemoteLookup Actor는 identify이거나 active 상태일 수 있다:
+
+* identify 상태: boxOffice의 ActorRef 가져온다.
+* active 상태: 모든 메시지를 boxOffice actor에 forward한다.
+
+RemoteLookup은 boxOffice Actor가 Terminated되는지 Remote Death Watch할 수 있다. boxOffice actor가 Terminated되면 다시 ActorRef를 가져온다.
+
+[source, scala]
+----
+import scala.concurrent.duration._
+
+class RemoteLookup(path:String) extends Actor with ActorLogging {
+    context.setReceiveTimeout(3 seconds) // <1>
+    sendIdentifyRequest() // <2>
+
+    def sendIdentifyRequest(): Unit = {
+        val selection = context.actorSelection(path) // <3>
+        selection ! Identify(path) // <4>
+    }
+
+    def receive = identify // <5>
+
+    def identify: Receive = {
+        case ActorIdentity(`path`, Some(actor)) => // <6>
+            context.setReceiveTimeout(Duration.Undefined) // <7>
+            log.info("switching to active state")
+            context.become(active(actor)) // <8>
+            context.watch(actor) // <9>
+
+        case ActorIdentity(`path`, None) => // <10>
+            log.error(s"Remote actor with path $path is not available.")
+
+        case ReceiveTimeout => // <11>
+            sendIdentifyRequest()
+
+        case msg:Any =>
+            log.error(s"Ignoring message $msg, not ready yet.")
+    }
+
+    def active(actor: ActorRef): Receive = {
+        case Terminated(actorRef) => // <12>
+            log.info("Actor $actorRef terminated.")
+            context.become(identify)
+            log.info("switching to identify state")
+            context.setReceiveTimeout(3 seconds) // <13>
+            sendIdentifyRequest() // <14>
+
+        case msg:Any => actor forward msg // <15>
+    }
+}
+----
+<1> 3초마다 ReceiveTimeout을 받는다.
+<2> Remote Actor의 ActorRef를 가져와서 Identify 메시지를 보낸다. Remote ActorSystem에 보내는 것임.
+<3> Remote ActorRef를 가져온다.
+<4> Identify 메시지를 보낸다.
+<5> identify 상태로 만든다.
+<6> Remote Actor가 다 준비됐다고 Remote ActorSystem이 ActorIdentity 메시지를 보내온다.
+<7> Remote Actor가 준비가 안됐다고 Remote ActorSystem이 보내온다.
+<8> ReceiveTimeout을 끈다.
+<9> active 상태로 바꾼다.
+<10> Remote Actor를 Watch한다.
+<11> 3초마다 Identify 메시지를 보낸다.
+<12> Remote Actor가 Terminated됐다!
+<13> ReceiveTimeout을 다시 켠다
+<14> Identify 메시지를 보낸다.
+<15> 모든 메시지를 Remote Actor에 forward한다.
+
+Remote Lifecycle Event(그런데 이게 뭐지?)는 기본적으로 로그가 남는데 끌 수 있다:
+
+[source, scala]
+----
+remtoe {
+    log-remote-lifecycle-events = off
+}
+----
+
+Actor System의 eventStream으로 remote lifecycle events를 subscribe할 수 있다. 10장에서 설명한다.
+
+==== 6.2.4 Remote Deployment
+
+static membership은 살펴봤고 dynamic membership 살펴본다. Remote Deployment는 Remote System에 Actor 인스턴스를 동적으로 만드는 것을 말하는 것 같다. Actor 코드까지 보내는 것은 아닌 것 같음.
+
+Remote Deployment는 pragmatically, configured 두 가지로 나뉜다. cluster 설정만으로 구성을 변경할 수 있기 때문에 configured가 권장된다.
+
+===== pragmatically
+
+Scala 코드로 만들 수 있는데 아래와 같다(복사해서 넣으면 돼겠지?):
+
+[source, scala]
+----
+val uri = "akka.tcp://backend@0.0.0.0:2552"
+val backendAddress = AddressFromURIString(uri)
+
+val props = Props[BoxOffice].withDeploy(
+    Deploy(scope = RemoteScope(backendAddress))
+)
+
+context.actorOf(props, "boxOffice")
+----
+
+====== configured
+
+[source, scala]
+----
+actor {
+    provider = "akka.remote.RemoteActorRefProvider"
+    deployment {
+        /restInterface/boxOffice { // <1>
+            remote = "akka.tcp://backend@0.0.0.0:2552" // <2>
+        }
+    }
+}
+----
+<1> 로컬 actor라서 guardian Actor는 생략한다. 이 path로 엑터를 만들면 remote(<2>)에 actor가 만들어진다.
+
+[source, scala]
+----
+val boxOffice = context.actorOf(Props[BoxOffice], "boxOffice") // <1>
+----
+<1> `/restInterface/boxOffice`라는 로컬 Actor를 만드는 코드지만 설정에 따라 Remote에 만들어진다.
+
+BackendMain과 FrontendMain을 바꿔본다:
+
+[source, scala]
+----
+// the main class to start the backend node.
+object BackendRemoteDeployMain extends App {
+    val config = ConfigFactory.load("backend")
+    val system = ActorSystem("backend", config) // <1>
+}
+
+object FrontendRemoteDeployMain extends App {
+    val config = ConfigFactory.load("frontend-remote-deploy")
+    val host = config.getString("http.host")
+    val port = config.getInt("http.port")
+    val system = ActorSystem("frontend", config)
+    val restInterface = system.actorOf(Props[RestInterface], // <2>
+        "restInterface")
+    Http(system).manager ! Bind(listener = restInterface,
+        interface = host,
+        port =port) }
+----
+<1> backend 에서 직접 boxOffice actor를 만들지 않는다.
+<2> 로컬 Actor를 만드는 기본 BoxOfficeCreator를 사용한다. 설정에 Remote Actor로 설정했기 때문에 로컬이 아니라 리모트에 만들어진다.
+
+[source]
+----
+// very long message, formatted in a couple of lines to fit.
+INFO  [RestInterface]: Received new event Event(RHCP,10), sending to
+Actor[akka.tcp://backend@0.0.0.0:2552/remote/akka.tcp/
+      frontend@0.0.0.0:2551/user/restInterface/boxOffice#-1230704641] // <1>
+----
+<1> `#`뒤의 정보는 actor를 만든 frontend 시스템의 정보다. frontend system과 통신하는데 사용된다.
+
+====== ActorRef
+
+* remote backend system이 crash하거나 restart하면 ActorRef가 새로운 remote actor instance를 가리킬 수 없다. remote actor는 remotely deployed된 거라서 backend system이 시작되도 스스로 만들지 않는다.
+* ActorSystem이 아니라 remote actor가 restart하면 ActoreRef는 자동으로 다시 만들어진 Actor를 가리킨다(As distinguished from the prior failure cases we saw, where only the actor itself is restarted, in which case the ref will still point to the recreated Actor).
+
+====== RemoteBoxOfficeForwarder
+
+ActorSystem이 Restart하든 Actor가 Restart하든 Remote ActorSystem에 Actor가 만들어져 있도록 보장해주는 RemoteBoxOfficeForwarder를 만들어보자. RemoteLookup과 비슷한 기능이다.
+
+여기서 보여주는 코드는 maybeActive한 불안전안 코드이고 actorSelection으로 직접 완성하는 것이 저자가 내주는 숙제다. 아래는 책에서 보여주는 숙제가 안된 코드:
+
+[source, scala]
+----
+trait ConfiguredRemoteBoxOfficeDeployment
+      extends BoxOfficeCreator { this:Actor =>
+    override def createBoxOffice = {
+        context.actorOf(Props[RemoteBoxOfficeForwarder],
+        "forwarder")
+    }
+}
+
+class RemoteBoxOfficeForwarder extends Actor with ActorLogging {
+    context.setReceiveTimeout(3 seconds)
+    deployAndWatch()
+
+    def deployAndWatch(): Unit = {
+        val actor = context.actorOf(Props[BoxOffice], "boxOffice")
+        context.watch(actor)
+        log.info("switching to maybe active state")
+        context.become(maybeActive(actor))
+        context.setReceiveTimeout(Duration.Undefined)
+    }
+
+    def receive = deploying
+    def deploying:Receive = {
+        case ReceiveTimeout =>
+        deployAndWatch()
+        case msg:Any =>
+        log.error(s"Ignoring message $msg, not ready yet.")
+    }
+
+    def maybeActive(actor:ActorRef): Receive = {
+        case Terminated(actorRef) =>
+        log.info("Actor $actorRef terminated.")
+        log.info("switching to deploying state")
+        context.become(deploying)
+        context.setReceiveTimeout(3 seconds)
+        deployAndWatch()
+        case msg:Any => actor forward msg
+    }
+}
+----
+
+===== Resilient Way
+
+이 Lookup과 Deployment를 적용하면 Resilient가 완성된다. Resilient하기 때문에 system의 실행 순서도 상관없다.
+
+==== 6.2.5 Multi-JVM testing
+
+* multi-jvm 설정을 보여주는데 이해할 수 없다. `SBT in action` 책을 보라고 한다. 보면 알 수 있을까?
+* `src/multi-jvm/scala` 폴더에 multi-jvm 테스트를 넣는다.
+* multi-jvm 테스트를 만들기 위해서 필요한 코드를 만들어 줘야 하는데 이해는 못하겠다. 책을 배껴서 넣자.
+* `multi-jvm:test` 명령으로 multi-jvm 테스트만 실행시킬 수 있다.
+
+넣었다 치고 본격 multi-jvm 테스트임:
+
+[source, scala]
+----
+"A Client Server configured app" must {
+    "wait for all nodes to enter a barrier" in {
+        enterBarrier("startup") // <1>
+    }
+
+    "be able to create an event and sell a ticket" in {
+        runOn(frontend) { // <2>
+            enterBarrier("deployed") // <3>
+
+            val restInterface = system.actorOf(
+                Props(new RestInterfaceMock
+                        with TestRemoteBoxOfficeCreator))
+
+            val path = node(backend) / "user" / "boxOffice" // <4>
+            val actorSelection = system.actorSelection(path)
+
+            actorSelection.tell(Identify(path), testActor)
+
+            val actorRef = expectMsgPF() { // <5>
+                case ActorIdentity(`path`, ref) => ref
+            }
+
+            restInterface ! Event("RHCP", 1)
+            expectMsg(EventCreated)
+
+            restInterface ! TicketRequest("RHCP")
+            expectMsg(Ticket("RHCP", 1))
+        }
+
+        runOn(backend) {
+            system.actorOf(Props[BoxOffice], "boxOffice")
+            enterBarrier("deployed") // <3>
+        }
+
+        enterBarrier("finished") // <6>
+    }
+}
+----
+<1> frontend, backend 노드가 시작할 때까지 기다린다.
+<2> frontend JVM에서만 실행되는 테스트 시나리오
+<3> frontend, backend 노드의 동기를 맞춘다. 그러니까 backend가 `endterBarrier("deployed")`를 실행할 때까지 frontend가 여기서 기다린다.
+<4> backend 노드의 actor path는 이런 식으로...
+<5> path의 actor를 찾을 때까지 기다린다.
+<6> 테스트를 끝낸다. frontend, backend가 모두 테스트 시나리오가 끝나도록 이부분에서 동기화하는 것 같음.
+
+=== 6.3 Summary
+
+아 모르겠다.
+
+좌우지간 분산하려면 Static Actor면 Lookup을 Dynamic Actor면 Forwarder를 구현해야 한다.
