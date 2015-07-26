@@ -1,0 +1,475 @@
+== Fault tolerance
+
+:numbered!:
+
+이 장에서 살펴보는 내용:
+
+* let it crash principle
+* supervision
+* monitoring
+* actor lifecycle
+
+
+=== 4.1 What fault tolerance is (and what it isn’t)
+
+장애가 발생하면 전체 시스템을 죽이지 않고 관리할 수 있어야 한다.
+
+==== 4.1.1 Plain old objects and exceptions
+
+전통적인 방법으로 에러를 핸들링하기.
+
+파일 시스템을 Watch하고 있다가 로그파일이 생기면 한 줄씩 읽어서 DB에 넣는 예제를 살펴본다:
+
+image::img/figure-4-1.png[caption="Figure 4.1:", title="Process logs application"]
+
+Multi Thread로 처리한다고 가정하면 아래의 그림처럼 구현할 수 있다:
+
+image::img/figure-4-5.png[caption="Figure 4.5:", title="Call stack while processing log files"]
+
+DBBrokenConnectionException이 발생하면 Recover해야 하는데 기존 방식에서는 쉽지 않다. encapsulation, inversion of control, single responsibility 등등의 복잡한 용어를 동원해서 해결해야 한다(akka에 비하면 다른건 껌아닌가.ㅋㅋㅋ)
+
+Java World에 Conneciton Pool이 세 개있는 데 다른 쓰레드에서 Dead Connection을 제거하는 구현체는 하나 뿐이다 => 뭘 말하는 거지?
+
+Fault Tolerant한 Connection Pool을 만들려면 아래의 요구사항에 부합해야 한다. 그러니까 **Fault Tolerant Requirements**:
+
+* Fault Isolation: Fault가 생겨도 전제 시스템에 영향을 주지 말것.
+* Structure: Fault Component를 Isolate할 수 있는 Structure가 필요하다.
+* Redundancy: Backup Component가 있어서 Fault Component가 하는 일을 넘겨 받아야 한다.
+* Replacement: Faulty Component를 정해진 Structure에 따라서 Replace할 수 있어야 한다.
+* Reboot: incorrect state에 빠지면 초기 state로 복구될 수 있어야 한다.
+* Component Lifecycle: Isolated된 Faulty Component는 시스템에서 제거하거나 재 초기화할 수 있어야 한다.
+* Suspend: Component에 문제가 생기면 고쳐질 때까지 suspend돼야 한다. 그래고 새 Component가 이어서 잘 처리해야 한다.
+* Seperation of Concerns: Fault-recovery Code는 다른 Code와 분리돼야 한다. Clean Seperation이 잘돼야 일을 단순하게 유지할 수 있다.
+
+이런걸 Akka로 할 수 있다(이 꼼꼼한 akka 자랑 ㅎㅎ). ** Actor는 Props 객체로 만들기 때문에 언제든지 다시 만들 수 있고 Actor Refenrence는 간접 참조 방식이기 때문에 이런게 가능하다**.
+
+==== Let it crash
+
+normal code는 normal Actor에 recovery code는 _supervisor_ Actor로 나눠서 담는다.
+
+===== Actor recovery
+
+image::img/figure-4-6.png[caption="Figure 4.6:", title="Normal and recovery flow"]
+
+Actor가 Crash하는 flow:
+
+. 일반 Actor는 그냥 Crash하도록 놔둔다.
+. Crashed Actor의 mailbox는 Suspend된다.
+. Supervisor가 Crashed Actor를 recovery한다.
+
+Akka는 `Parental Supervision`이 강제되서 부모가 자식의 supervisor가 된다. supervisor는 특정 예외를 처리하거나 하는게 아니라 Crashed Actor가 어떻게 해야할 지 판단할 뿐이다. Supervisor가 Actor에 하는 일은 아래와 같다:
+
+* Restart: Props를 기반으로 Actor는 다시 만들어져야 한다. 다시 만들어지면 기존 mailbox의 메시지를 이어서 처리한다. 다른 Actor들은 ActorRef로 참조하기 때문에 문제 없다.
+* Resume: Crash는 무시되고 Actor는 계속 다른 메시지를 처리한다.
+* Stop: Actor를 종료한다.
+* Escalate: 이 Supervisor는 어떻게 판단해야 할지 모르니까 상위(부모) Supervisor에게 처리를 넘긴다.
+
+이걸 위에 예제에 적용하면 아래 그림과 같다:
+
+image::img/figure-4-7.png[caption="Figure 4.7:", title="Normal and recovery flow in the logs processing application"]
+
+===== Failed Message Recovery
+
+Actor가 restart되도 Failed Message까지 복구해주지 않는다. Failed Message가 다시 Mailbox로 넣어지면 Fail하는 메지지만 계속 처리하게 되니까 Akka는 이렇게 해주지 않는다.
+
+그래도 메시지가 엄청많고 그중 하나만 Fail한다면 Failed Message 하나빼고 잘 처리될 것이다.
+
+image::img/figure-4-8.png[caption="Figure 4.8:", title="Handling the DbBrokenConnectionException with a restart"]
+
+===== `Let it crash` 어프로치의 장점
+
+위에 소개한 Fault Tolerent Requirement를 Akka 입장에서 재해석하면 아래와 같다:
+
+* Fault isolation: supervisor가 actor를 종료하고 제거한다
+* Structure: Actor System Hierarchy와 Actor Reference는 다른 Actor에 영향을 주지 않고 Replace할 수 있게 해준다.
+* Redundancy: Actor는 언제든지 다른 Actor로 교체될 수 있다. Supervisor가 Faulty Actor를 종료하고 Actor를 새로 만든다.
+* Replacement: Actor는 Props로 만든다. 그래서 Supervisor는 Actor에 대해 자세히 몰라도 다시 만들 수 있다.
+* Reboot: Actor는 Restart된다.
+* Component Lifecycle: Acotr는 Started, Stopped, Restarted될 수 있다.
+* Suspend: Actor가 Crash되면 mailbox는 Suspend된다. Supervisor가 어떻게 할지 결정할 때까지 Suspend된다.
+* Separation of concerns: 메시지 처리 플로우랑 Recovery 플로우는 Orthogonal하고 다른 Actor로 완벽하게 분리할 수 있다.
+
+=== 4.2 Actor Lifecycle
+
+* Started 상태: Actor가 만들어지면 Started 상태가 된다.
+** Started 상태에서 무한히 Restart 될 수 있다.
+* Terminated 상태: Terministaed가 되면 더 이상 메시지를 처리하지 않고 GC된다.
+* Hook: 상태가 변경될 때 Hook이 있어서 핸들링할 수 있다.
+** Restart시 이 Hook으로 Failed 메시지를 처리할 수 있다.
+** 리소스를 해제할 수 있다.
+
+==== 4.2.1 Start Event
+
+`ActorSystem.actorOf`나 `ActorContext.actorOf` 메소드로 Actor를 만들면 바로 시작된다.
+
+image::img/figure-4-9.png[caption="Figure 4.9:", title="Starting an actor"]
+
+Actor가 시작하기전에 `preStart` Hook이 호출된다:
+
+[source, scala]
+----
+override def preStart() {
+    println("preStart")
+
+    // <1>
+}
+----
+<1> Constructor에서 Actor 초기화가(set initial state) 완료된다고 보장되지 않는다. 그래서 Actor의 초기화는 Constructor가 아니라 이 Hook에서 해야 한다.
+
+==== 4.2.2 Stop Event
+
+`ActorSystem.stop`나 `ActorContext.stop` 메소드를 호출하거나 Actor에 `PoisonPill` 메시지를 보내면 Actor가 Stop된다.
+
+image::img/figure-4-10.png[caption="Figure 4.10:", title="Stop an actor"]
+
+`postStop` 훅은 Actor가 Terminated 상태가 되기 전에 호출된다. Terminated 상태가 되면 Actor는 메시지를 처리할 수 없다.
+
+[source, scala]
+----
+override def postStop() {
+    println("postStop")
+
+    // <1>
+    // <2>
+}
+----
+<1> `preStart` Hook에서 생성한 리소스를 해제한다.
+<2> 다음 Actor가 이을 수 있도록 Actor의 State를 저장한다.
+
+Actor가 Stopped되면 ActorRef에서 연결이 끊기고 이 ActorRef는 `deadLetters` ActorRef로 redirect된다. Dead Actor에 오는 메시지는 전부 `deadLetters` ActorRef가 받는다.
+
+==== 4.2.3 Restart Event
+
+Actor 인스턴스가 Replace되기 때문에 다른 것보다 복잡하다.
+
+image::img/figure-4-11.png[caption="Figure 4.11:", title="Restarting an actor"]
+
+`preRestart` Hook:
+
+[source, scala]
+----
+override def preRestart(reason: Throwable, message: Option[Any]){ // <1>
+    println("preRestart")
+    super.preRestart(reason, message) // <2>
+}
+----
+<1> Crash를 핸들할 수 있도록 Throwable과 Failed Message를 아규먼트로 받는다.
+<2> `super.preRestart`를 호출하면 자식 Actor들이 전부 Stop된다. `postStop`도 실행시킨다.
+
+`preRestart`의 기본 행동은 자식 Actor를 전부 Stop하는 것이다. `super.preRestart`를 생략하면 자식 Actor가 그대로 남아서 조심해야 한다. Restart는 Props로 Actor를 만들고 이 때 Constructor가 호출되기 때문에 자식 Actor가 전부 다시 만들어질 수 있기 때문에 조심해야 한다.
+
+Restart는 stop 메소드를 호출한 것과 다르다:
+
+* 나중에 살펴볼테지만 Actor의 Death를 모니터링할 수 있다.
+* Crashed Actor는 Terminated 메시지를 발생시키지 않는다.
+* Fresh Actor는 기존 ActorRef에 자동으로 연결된다.
+* Stopped Actor는 기존 ActorRef에서 연결이 끊기고 `deadLetters` ActorRef로 Redirect된다.
+
+Fresh Actor가 기존 Actor의 State를 넘겨 받는 방법:
+
+* Supervisor가 State를 메시지로 새 Actor에 보낸다.
+** Failed Message를 새 Actor가 처리하도록 하려면 간단히 self ActorRef로 Failed Message를 보내면 된다.
+*** 이렇게 하면 메시지 순서가 바뀐다. MailBox의 Top에 넣어지고 나중에 처리된다.
+* 기존 Actor가 DB나 어딘가에 State를 저장하고 새 Actor는 그 State를 읽어들인다.
+
+`preRestart` Hook, `Constructor`, `postRestart` Hook 순서대로 호출된다:
+
+image::img/figure-4-12-1.png[caption="Figure 4.12.1:", title="Restart an actor"]
+
+[source, scala]
+----
+override def postRestart(reason: Throwable) { // <1>
+    println("postRestart")
+    super.postRestart(reason) // <2>
+}
+----
+<1> `preRestart`에서 받았던 reason과 같은 객체다.
+<2> `preStart`를 Trigger한다. 이 것을 생략하면 Restart시 `preStart`가 실행되지 않는다.
+
+==== 4.2.4 Putting the lifecycle pieces together
+
+image::img/figure-4-12.png[caption="Figure 4.12:", title="Full lifecycle of an actor"]
+
+모든 Hook을 합친 코드:
+
+[source, scala]
+----
+class LifeCycleHooks extends Actor
+                     with ActorLogging{
+    System.out.println("Constructor")
+
+    override def preStart() {println("preStart")}
+
+    override def postStop() {println("postStop")}
+
+    override def preRestart(reason: Throwable, message: Option[Any]) {
+        println("preRestart")
+        super.preRestart (reason, message)
+    }
+
+    override def postRestart(reason: Throwable) {
+        println("postRestart")
+        super.postRestart(reason)
+    }
+
+    def receive = {
+        case "restart" =>
+        throw new IllegalStateException("force restart")
+        case msg: AnyRef => println("Receive")
+    }
+}
+----
+
+Test:
+
+[source, scala]
+----
+val testActorRef = system.actorOf(
+  Props[LifeCycleHooks], "LifeCycleHooks")
+testActorRef ! "restart"
+testActorRef.tell("msg", testActor)
+expectMsg("msg")
+system.stop(testActorRef)
+Thread.sleep(1000)
+----
+
+실행결과:
+
+[source]
+----
+Constructor
+preStart
+preRestart force restart
+postStop
+Constructor
+postRestart force restart
+preStart
+Receive
+postStop
+----
+
+==== 4.2.5 Monitoring the Lifecycle
+
+Terminated:
+
+* `stop` 메소드를 직접 호출하면 Terminated된다. PosonPill 메시지를 받으면 간접적으로 `stop` 메소드가 호출되고 Terminated된다.
+* Restart는 다르게 처리한다. 이 때는 Terminate되지 않고 Replace된다.
+
+Monitoring은 Supervision과 다르다:
+
+* Monitoring: `context.watch`로 어떤 Actor든지 Monitoring할 수 있다.
+** 등록한 Actor가 Terminated되면 Terminated 메시지를 받는다.
+** `context.unwatch`로 등록을 해제할 수 있다.
+* Supervision: 부모만 Supervisor가 될 수 있다. Supervisor는 자식의 Terminated, Restarted, Stopped 상태를 관장할 수 있다.
+
+DbWatcher:
+
+[source, scala]
+----
+class DbWatcher(dbWriter: ActorRef) extends Actor with ActorLogging {
+    context.watch(dbWriter)
+    def receive = {
+        case Terminated(actorRef) =>
+        log.warning("Actor {} terminated", actorRef)
+    }
+}
+----
+
+=== 4.3 Supervision
+
+User Actor는 User Space인 `/user` Path 하위에 위치한다.
+
+==== 4.3.1 Supervisor Hierarchy
+
+Actor를 아래와 같이 구성한다.
+
+image::img/figure-4-14.png[caption="Figure 4.14:", title="Supervisors forward messages in the message flow"]
+
+예를 들어 fileWatcher는 logProcessor의 ActorRef가 아니라 logProcessorsSupervisor의 ActorRef를 참조하므로 logProcessor의 lifecycle에 완전히 독립적이다.
+
+이 Supervisor 모델과 6장에서 설명하는 Lookup, Forwarde 개념이 합쳐진 구현이 필요할 것 같다.
+
+==== 4.3.2 Predefined strategies
+
+* SupervisorStrategy에는 defaultStrategy, StoppingStrategy로 두 가지가 미리 정의돼 있다.
+* Supervisor가 처리하지 않은 Throwable은 상위 Supervisor한테 넘어간다.
+
+===== defaultStrategy
+
+* 모든 Actor는 defaultStrategy를 따른다.
+* defaultStrategy가 모든 Actor의 default임을 변경할 수 없다. => Actor Trait 별로 변경해야 한다는 말인듯.
+
+[source, scala]
+----
+final val defaultStrategy: SupervisorStrategy = {
+    def defaultDecider: Decider = {
+        case _: ActorInitializationException => Stop // <1>
+        case _: ActorKilledException => Stop // <2>
+        case _: Exception => Restart // <3>
+    }
+    OneForOneStrategy()(defaultDecider) // <4>
+}
+----
+<1> Actor가 초기화하다 예외가 발생하는 경우
+<2> Actor를 해제하다가 예외가 발생하는 경우
+<3> Restart!
+<4> 모든 Actor는 독립적이다.
+
+예를 들어, `/user` guardian Actor는 top-level Actor가 Exception을 던지면 top-level Actor를 Restart시킨다.
+
+===== stoppingStrategy
+
+[source, scala]
+----
+final val stoppingStrategy: SupervisorStrategy = {
+    def stoppingDecider: Decider = {
+        case _: Exception => Stop // <1>
+    }
+    OneForOneStrategy()(stoppingDecider)
+}
+----
+<1> 좌우지간 Stop!
+
+
+
+* OneForOneStrategy: Children 중에서 예외를 던진 해당 Actor에만 적용한다.
+* AllForOneStrategy: 어떤 Child에서 예외를 던지면 모든 Children에 적용한다.
+
+
+* fatal error는 Actor에서 처리하지 않는 것을 권장한다.
+* fatal error가 발생하면 Actor System이 gracefully shut down하도록 한다.
+* fatal error가 발생하면 JVM을 exit시킬지 Actor System을 gracefully shutdown 시킬지 설정할 수 있다
+* 책 어딘가에서(5장이라고 돼있는데 5장은 future라서 아님) 설정하는 법을 설명한다.
+
+==== 4.3.3 Custom strategies
+
+네 가지 Custom strategies를 살펴본다:
+
+. *DB Supervisor*: Restart the child, remove the crashed actor instance, and replace it with a fresh actor instance.
+. *Log Processor Supervisor*: Resume the child, ignore errors, and keep processing with the same actor instance.
+. *FileWatcher Supervisor*: Stop the child, terminate the child permanently.
+. *DB Impatient Supervisor*: Escalate the failure and let the parent actor decide what action needs to be taken.
+
+===== DB Supervisor
+
+[source, scala]
+----
+class DbWriter(connection: DbCon) extends Actor {
+    import LogProcessingProtocol._
+
+    def receive = {
+        case Line(time, message, messageType) =>
+            connection.write(Map('time -> time,
+                'message -> message,
+                'messageType -> messageType))
+    }
+}
+
+class DbSupervisor(writerProps: Props) extends Actor {
+    override def supervisorStrategy = OneForOneStrategy() {
+        case _: DbBrokenConnectionException => Restart
+    }
+
+    val writer = context.actorOf(writerProps)
+
+    def receive = {
+        case m => writer forward (m)
+    }
+}
+----
+
+===== Log Processor Supervisor
+
+[source, scala]
+----
+class LogProcessor(dbSupervisor: ActorRef)
+        extends Actor with LogParsing {
+    import LogProcessingProtocol._
+
+    def receive = {
+        case LogFile(file) =>
+            val lines = parse(file)
+            lines.foreach(dbSupervisor ! _)
+    }
+}
+
+class LogProcSupervisor(dbSupervisorProps: Props)
+        extends Actor {
+    override def supervisorStrategy = OneForOneStrategy() {
+        case _: CorruptedFileException => Resume
+    }
+
+    val dbSupervisor = context.actorOf(dbSupervisorProps)
+    val logProcProps = Props(new LogProcessor(dbSupervisor))
+    val logProcessor = context.actorOf(logProcProps)
+
+    def receive = {
+        case m => logProcessor forward (m)
+    }
+}
+----
+
+===== FileMatcher Supervisor
+
+[source, scala]
+----
+class FileWatcher(sourceUri: String,
+                  logProcSupervisor: ActorRef)
+        extends Actor with FileWatchingAbilities {
+    register(sourceUri)
+
+    import FileWatcherProtocol._
+    import LogProcessingProtocol._
+
+    def receive = {
+        case NewFile(file, _) =>
+            logProcSupervisor ! LogFile(file)
+
+        case SourceAbandoned(uri) if uri == sourceUri =>
+            self ! PoisonPill
+    }
+}
+
+class FileWatchingSupervisor(sources: Vector[String],
+                             logProcSuperProps: Props)
+        extends Actor {
+    var fileWatchers: Vector[ActorRef] = sources.map { source =>
+        val logProcSupervisor = context.actorOf(logProcSuperProps)
+        val fileWatcher = context.actorOf(Props(
+                new FileWatcher(source, logProcSupervisor)))
+        context.watch(fileWatcher)
+        fileWatcher
+    }
+
+    override def supervisorStrategy = AllForOneStrategy() {
+        case _: DiskError => Stop
+    }
+
+    def receive = {
+        case Terminated(fileWatcher) =>
+            fileWatchers = fileWatchers.filterNot(w => w == fileWatcher)
+            if (fileWatchers.isEmpty) self ! PoisonPill
+    }
+}
+----
+
+===== DB Impatient Supervisor
+
+[source, scala]
+----
+class DbImpatientSupervisor(writerProps: Props) extends Actor {
+    override def supervisorStrategy = OneForOneStrategy(
+            maxNrOfRetries = 5,
+            withinTimeRange = 60 seconds) {
+        case _: DbBrokenConnectionException => Restart
+    }
+
+    val writer = context.actorOf(writerProps)
+
+    def receive = {
+        case m => writer forward (m)
+    }
+}
+----
+
+=== 4.4 Summary
