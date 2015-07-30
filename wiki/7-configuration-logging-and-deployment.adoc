@@ -1,0 +1,389 @@
+== 7. Configuration, Logging and Deployment
+
+:numbered!:
+
+이 장에서 살펴보는 것:
+
+* Configuration
+* Logging
+* Stand-alone applications
+* Web Applications
+* Deployment
+
+=== 7.l Configuration
+
+https://github.com/typesafehub/config[TypeSafe Config Library]가 킹왕짱!:
+
+* 관례에 따라서 쉬운 다단계 Defaulting.
+* Properties, JSON, HOCON 포멧 지원
+
+==== 7.1.1 Trying Out Akka Configuration
+
+`ConfigFactory.load()` 시 아래 순서로 설정파일을 찾는다:
+
+. application.properties
+. application.json
+. application.conf: HOCON 포멧
+
+이 파일이 다 있으면 다 로딩한다(테스트 해볼것.). 아래처럼 생김:
+
+. application.conf
+[source, scala]
+----
+MyAppl {
+    version = 10
+    description = "My application"
+    database {
+        connect="jdbc:mysql://localhost/mydata"
+        user="me"
+    }
+}
+----
+
+. Getting
+[source, scala]
+----
+val applicationVersion = config.getInt("MyAppl.version")
+val databaseConnectSting = config.getString("MyAppl.database.connect")
+
+val databaseCfg = configuration.getConfig("MyAppl.database")
+val databaseConnectSting = databaseCfg.getString("connect")
+----
+
+. Substitution, Default, 환경변수
+[source, scala]
+----
+hostname="localhost" // <1>
+hostname=${?HOST_NAME} // <2>
+MyAppl {
+    version = 10
+    description = "My application"
+    database {
+        connect="jdbc:mysql://${hostname}/mydata" // <3>
+        user="me"
+    }
+}
+----
+<1> Default
+<2> `?`가 있으면 환경변수에서 읽어온다. 있을 때만 Override한다.
+<3> Substitution
+
+==== 7.1.2 Using Defaults
+
+* jar 파일 루트에 `reference.conf` 파일을 만들어 default 값을 넣는다. (`src/scala/resources/reference.conf`)
+* Preventing Null Properties
+
+===== Fall-back structure
+
+이 순서대로 찾는다:
+
+1. System Properties
+2. application.conf
+3. application.json
+4. application.Properties
+5. reference.conf
+
+===== Changing Configuration File
+
+* `ConfigFactory.load("myapp")`: `myapp.{conf,json,properties}` 파일을 찾는다.
+* System Properties 설정으로 지정할 수도 있다: System Properties를 정의하면 `{conf,json,properties}`를 찾지 않는다.
+** `config.resource`: 파일이름 `application`이 아니라 `application.conf`로 확장자 까지 넣어줘야 한다.
+** `config.file`: path까지 적는다. 역시 확장자 포함
+** `config.url`: url!
+
+==== 7.1.3 Akka Configuration
+
+[source, scala]
+----
+val configuration = ConfigFactory.load("mysystem")
+val systemA = ActorSystem("mysystem", configuration) // <1>
+
+val mySystem = ActorSystem("myAppl") // <2>
+val config = mySystem.settings.config // <3>
+val applicationDescription = config.getString("myAppl.name")
+----
+<1> 명시적 Configuration
+<2> 위에 설명한대로 Default Configuration
+<3> ActorSystem 설정 가져오기.
+
+==== 7.1.4 Multiple Systems
+
+===== One Environment, Many JVM
+
+System Properties를 이용해서 JVM마다 다른 설정파일에서 읽어오도록 한다. 공통 설정은 다른 파일로 빼고 include한다.
+
+. baseConfig.conf
+[source, scala]
+----
+MyAppl {
+    version = 10
+    description = "My application"
+}
+----
+
+. subAppl.conf
+[source, scala]
+----
+include "baseConfig"
+MyAppl {
+    description = "Sub Application"
+}
+----
+
+===== One JVM, Many ActorSystem
+
+JVM이 하나 이므로 System Properties 영역도 하나다. 그래서 한 파일에 설정해서 사용한다.
+
+. combined.conf
+[source, scala]
+----
+MyAppl {
+    version = 10
+    description = "My application"
+}
+
+subApplA {
+    MyAppl {
+        description = "Sub application"
+    }
+}
+----
+
+. scala
+[source, scala]
+----
+val configuration = ConfigFactory.load("combined")
+val subApplACfg = configuration.getConfig("subApplA")
+val config = subApplACfg.withFallback(configuration) // <1>
+----
+<1> 이렇게 Fallback 시킬 수 있다.
+
+=== 7.2 Logging
+
+Akka Toolkit 은 logging adapter를 구현해서 logging framework은 암거나 쓰면 된다.
+
+* Akka가 생성해주는 로그도 있다.
+* 사용자가 남기는 로그도 있다.
+
+==== 7.2.1 Logging in an Akka Application
+
+. Creating logging adapter
+[source, scala]
+----
+class MyActor extends Actor {
+    val log = Logging(context.system, this)
+    // ...
+}
+----
+
+Actor는 eventSystem을 사용해서 eventhandler에 로그 메시지를 보낸다. eventSystem은 Akka의 pub-sub system이고 나중에 설명한덴다. 이 모델의 장점은 아래와 같다:
+
+* 로그를 남기는 방법인 eventHandler는 설정할 수 있다.
+* IO가 느린 것을 걱정하지 않아도 된다.
+* Concurrent 환경에서 다른 Thread 때문에 대기할 걱정을 놓아도 된다.
+
+. Configure eventHandler
+[source, scala]
+----
+akka {
+    # Event handlers to register at boot time
+    # (Logging$DefaultLogger logs to STDOUT)
+    event-handlers = ["akka.event.Logging$DefaultLogger"]
+    # Options: ERROR, WARNING, INFO, DEBUG
+    loglevel = "DEBUG"
+}
+----
+
+. my eventHandler
+[source, scala]
+----
+import akka.event.Logging.InitializeLogger
+import akka.event.Logging.LoggerInitialized
+import akka.event.Logging.Error
+import akka.event.Logging.Warning
+import akka.event.Logging.Info
+import akka.event.Logging.Debug
+class MyEventListener extends Actor
+{
+    def receive = {
+        case InitializeLogger(_) =>
+            sender ! LoggerInitialized // <1>
+        case Error(cause, logSource, logClass, message) =>
+            println( "ERROR " + message)
+        case Warning(logSource, logClass, message) =>
+            println( "WARN " + message)
+        case Info(logSource, logClass, message) =>
+            println( "INFO " + message)
+        case Debug(logSource, logClass, message) =>
+            println( "DEBUG " + message)
+    }
+}
+----
+<1> eventHandler 초기화가 끝났음을 알려줘야 한다.
+
+Akka에 있는 eventHandler는 두 개다:
+
+* 하나는 STDOUT 출력하는 default logger
+* 하나는 SLF4J를 사용하는 logger, `akka-slf4j.jar` 파일에 들어 있다.
+
+. Use slf4j eventHandler
+[source, scala]
+----
+akka {
+    event-handlers = ["akka.event.slf4j.Slf4jEventHandler"]
+    # Options: ERROR, WARNING, INFO, DEBUG
+    loglevel = "DEBUG"
+}
+----
+
+==== 7.2.2 Using Logging
+
+`Logging(context.system, this)`에서 두번째 파라미터인 this는 logging channel의 source로 사용된다. 이 this부분이:
+
+* Actor나 ActorRef면 path가 사용된다
+* String이면 String 값이 그대로 사용된다.
+* 클래스이면 클래스의 simpleName이 사용된다.
+
+ActorLogging Trait을 mixin하면 자동으로 log 멤버를 사용할 수 있다.
+
+[source, scala]
+----
+class MyActor extends Actor with ActorLogging {...}
+----
+
+`if(logger.isDebugEnabled())`를 안써도 되도록 placeholder를 지원한다.
+
+[source, scala]
+----
+log.debug("two parameters: {}, {}", "one", "two")
+----
+
+==== 7.2.3 Controlling Akka's logging
+
+아래처럼 설정해야 한다. 뭔말이니 이거.!!
+
+[source, scala]
+----
+akka {
+    # logging must be set to
+    DEBUG to use any of the options below
+    loglevel =     DEBUG
+    # Log the complete configuration at INFO level when the actor
+    # system is started. This is useful when you are uncertain of
+    # what configuration is used.
+    log-config-on-start = on
+    debug {
+        # logging of all user-level messages that are processed by
+        # Actors that use akka.event.LoggingReceive enable function of
+        # LoggingReceive, which is to log any received message at
+        # DEBUG level
+        receive = on
+        # enable DEBUG logging of all AutoReceiveMessages
+        # (Kill, PoisonPill and the like)
+        autoreceive = on
+        # enable DEBUG logging of actor lifecycle changes
+        # (restarts, deaths etc)
+        lifecycle = on
+        # enable DEBUG logging of all LoggingFSMs for events,
+        # transitions and timers
+        fsm = on
+        # enable DEBUG logging of subscription (subscribe/unsubscribe)
+        # changes on the eventStream
+        event-stream = on
+    }
+
+    remote {
+        # If this is "on", Akka will log all outbound messages at
+        # DEBUG level, if off then they are not logged
+        log-sent-messages = on
+        # If this is "on," Akka will log all inbound messages at
+        # DEBUG level, if off then they are not logged
+        log-received-messages = on
+    }
+}
+----
+
+대강 Actor Lifecycle과 Message를 주고 받을 때 선택적으로 로그를 남길 수 있다는 것 같음
+
+이 로그를 받으려면 `actor.event.LoggingReceive`가 필요하다:
+
+[source, scala]
+----
+class MyActor extends Actor with ActorLogging {
+    def receive = LoggingReceive {
+        case ... => ...
+    }
+}
+----
+
+=== 7.3 Deploying Actor-based Applications
+
+==== 7.3.1 Stand-alone application
+
+메시지를 주고 받을 Actor 두 개 준비!
+
+[source, scala]
+----
+class HelloWorld extends Actor
+        with ActorLogging {
+    def receive = {
+        case msg:String  =>
+            val hello = "Hello %s".format(msg)
+            sender ! hello
+            log.info("Sent response {}",hello)
+    }
+}
+----
+
+[source, scala]
+----
+class HelloWorldCaller(timer:Duration, actor:ActorRef)
+        extends Actor with ActorLogging {
+
+    case class TimerTick(msg:String)
+
+    override def preStart() {
+        super.preStart()
+        context.system.scheduler.schedule(
+                timer, timer, self, new TimerTick("everybody"))
+    }
+
+    def receive = {
+        case msg: String  => log.info("received {}",msg)
+        case tick: TimerTick => actor ! tick.msg
+    }
+}
+----
+
+Bootable을 구현하면 Akka Kernel의 startup, shutdown시 뭔가를 실행시킬 수 있다.
+
+[source, scala]
+----
+import akka.actor.{ Props, ActorSystem }
+import akka.kernel.Bootable
+import scala.concurrent.duration._
+
+class BootHello extends Bootable {
+    val system = ActorSystem("hellokernel")
+
+    def startup = {
+        val actor = system.actorOf(Props[HelloWorld])
+        val config = system.settings.config
+        val timer = config.getInt("helloWorld.timer")
+
+        system.actorOf(Props(new HelloWorldCaller(timer millis, actor)))
+    }
+
+    def shutdown = {
+        system.shutdown()
+    }
+}
+----
+
+`akka-sbt-plugin`을 쓰면 dist 명령을 쓸 수 있고 자동으로 패키징 해준다.
+
+==== 7.3.2 Akka with a web Applications
+
+playmini로 간단한 웹앱을 만든다.
+
+=== 7.4 Summary
