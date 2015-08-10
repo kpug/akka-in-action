@@ -1,0 +1,793 @@
+== 9 Routing Messages
+
+:numbered!:
+
+In this chapter:
+
+* Enterprise Integration Router Pattern
+* Using Akka routers for performance improvement Actor Become/unbecome mechanism
+* Enterprise Integration Routing slip Pattern
+
+=== 9.1 The Enterprise Integration Router Pattern
+
+책에서 사용하는 예제:
+
+image::img/figure-9-1.png[caption="Figure 9.1:", title="Routing logic sends different messages to different process flows"]
+
+Three reasons for controlling message flow in your application:
+
+* Performance: 그러니까 round robin이나 balancing.
+* Content of the received message: Content-based routing.
+* State of router: router의 상태에 따라...
+
+=== 9.2 Balance load using Akka routers
+
+Router를 쓰면 Routee를 scale up하거나 scale out(remote actor)하는 것을 자유롭게 할 수 있다.
+
+image::img/figure-9-2.png[caption="Figure 9.2:", title="Router as load balancer"]
+
+Router에는 두가지 타입이 있다:
+
+* Pool
+** Routee는 Router의 children이다.
+*** Routee의 Lifecycle을 Router가 직접 관리하므로 Lifecycle이 단순할 때 사용한다.
+* Group
+** Routee는 Router의 children이 아니다.
+*** 그러니까 Routee를 관리하는 로직이 필요할 때(Supervisor를 사용할 때) Group Router를 사용한다.
+
+image::img/figure-9-3.png[caption="Figure 9.3:", title="Different actor hierarchy structure between a pool and group router"]
+
+.Table 9.1 List of available routers within Akka
+[width="100%",cols="2",options="header"]
+|=========================================================
+|Logic/Pool/Group |Description
+|RoundRobinRoutingLogic / RoundRobinPool / RoundRobinGroup |round robin으로 Routee에 메시지를 보낸다.
+|RandomRoutingLogic / RandomPool / RandomGroup | random하게 Routee를 선택해서 메시지를 보낸다.
+|SmallestMailboxRoutingLogic / SmallestMailboxPool / N/A | Mailbox 사이즈가 가장 작은 Routee에 메시지를 보낸다. Group은 Routee의 mailbox 정보를 알 수 없으므로 이용할 수 없다.
+|N/A / BalancingPool / N/A | Routee들은 하나의 Mailbox를 공유한다. Router는 특별한 Dispatcher를 사용해야 하므로 Pool Router만 가능하다.
+|BroadcastRoutingLogic / BroadcastPool / BroadcastGroup | Recipient List Pattern 구현체
+|ScatterGatherFirstCompletedRoutingLogic / ScatterGatherFirstCompletedPool / ScatterGatherFirstCompletedPool | Scatter-Gather Pattern를 구현한 것인데 fastest response를 받아 sender에게 돌려준다.
+|=========================================================
+
+세가지 방법으로 사용할 수 있다:
+
+* Logic을 이용해서 직접 Actor를 구현한다.
+* Akka Pool Router를 사용한다.
+* Akka Group Router를 사용한다.
+
+==== 9.2.1 Akka Pool router
+
+Pool은:
+
+* 모든 Routee가 동일한 방식으로 만들어지고 분산될 때 좋다.
+* 특별한 Routee Recovery 로직이 필요 없을 때 좋다.
+* 그러니까 "Simple" Routee일 때 좋다.
+
+===== Creating Pool Router
+
+설정으로 Router를 만들 수도 있고 Scala 코드로 만들 수도 있다.
+
+====== FromConfig
+
+Router:
+
+[source, scala]
+----
+val router = system.actorOf(FromConfig.props( // <1>
+        Props(new GetLicense(endProbe.ref))), // <2>
+        "poolRouter") // <3>
+----
+<1> Router를 설정에서 읽어오겠다는 것
+<2> 어떤 Routee를 만들게 할 것인지
+<3> Router 이름(이렇게 Router 이름을 명시하는 것으로 봐서는 설정에서 이 이름의 설정을 읽어오겠다는 뜻이 아닐까?)
+
+설정:
+
+[source, scala]
+----
+akka.actor.deployment {
+    /poolRouter { // <1>
+        router = balancing-pool // <2>
+        nr-of-instances = 5 // <3>
+    }
+}
+----
+<1> 라우터 이름. "getLicenseBalencer"라는 Actor에서 이 Router를 만들면 최종적으로 "/getLicenseBalencer/poolRouter"라는 이름이 된다. 그러니까 그 때는 "/getLicenseBalencer/poolRouter"라고 설정해야 한다.
+<2> Router의 logic
+<3> Pool size
+
+====== Code
+
+[source, scala]
+----
+val router = system.actorOf(BalancingPool(5).props( // <1>
+        Props(new GetLicense(endProbe.ref))),
+        "poolRouter")
+----
+<1> BalancingPool Logic을 사용하고 Pool size는 5다.
+
+이 Pool Router가 Kill이나 Poison Pill 메시지를 받으면 Routee에 전달되는 것이 아니라 Router가 종료한다. Routee는 Router의 Child이기 때문에 Routee도 종료한다.
+
+[NOTE]
+.Broadcast Message on BalancingPool
+====
+BalancingPool Logic의 Routee는 하나의 Mailbox를 공유한다. 그래서 모든 Routee에 동일한 메시지를 한번씩 보내는 것이 보장 안된다.
+====
+
+===== Remote Routees
+
+[source, scala]
+----
+val addresses = Seq( // <1>
+    Address("akka.tcp", "GetLicenseSystem", "192.1.1.20", 1234),
+    AddressFromURIString("akka.tcp://GetLicenseSystem@192.1.1.21:1234"))
+
+val routerRemote1 = system.actorOf(
+    RemoteRouterConfig(FromConfig(), addresses).props( // <2>
+        Props(new GetLicense(endProbe.ref))), "poolRouter-config")
+
+val routerRemote2 = system.actorOf(
+    RemoteRouterConfig(RoundRobinPool(5), addresses).props(
+        Props(new GetLicense(endProbe.ref))), "poolRouter-code")
+----
+<1> address 정보를 두 종류로 만들 수 있다.
+<2> RemoteRouterConfig로 한번 감싸 주기만 하면 Remote Actor가 만들어진다.
+
+===== Dynamically Resizable Pool
+
+[source, scala]
+----
+akka.actor.deployment {
+    /poolRouter {
+        router = round-robin-pool
+        resizer {
+            enabled = on // <1>
+            lower-bound = 1 // <2>
+            upper-bound = 10 // <3>
+            pressure-threshold = 1 // <4>
+            rampup-rate = 0.25 // <5>
+            backoff-threshold = 0.3 // <6>
+            backoff-rate = 0.1 // <7>
+            messages-per-resize = 10 // <8>
+        }
+    }
+}
+----
+<1> resizer를 켠다.
+<2> 최소 Routee
+<3> 최대 Routee
+<4> under pressure 일 때 Routee를 추가한다. `pressure-threshold`가 1이면 Routee의 MailBox에 message가 한 개 있을 때가 'under pressure'인 상태를 의미한다. 책에서는 0인 경우를 설명한다.
+<5> 백분율. 만약 Pool size가 5인 상황에서 `round(5*0.25) == 2` 이므로 한번에 2개씩 Routee가 추가된다.
+<6> 백분율. 30%(0.3)이면 Routee가 10개 일 때 Busy인 Routee가 2개일 때 backoff가 trigger된다.
+<7> 백분율. 10%(0.1)이면 Routee가 10개 일 때 1개씩 줄어든다.
+<8> Router가 받는 메시지 개수. resize 조건에 만족하더라도 10개 마다 한번의 resize가 허용된다.
+
+`pressure-threshold`가 0인 경우의 예:
+
+image::img/figure-9-4.png[caption="Figure 9.4:", title="Example of a router pool coming under pressure"]
+
+**resize를 체크하는 것은 Message를 Routee에 할당할 때**다. Routee가 전부 Busy일 때 Message가 들어오면 Routee가 하나 추가된다. 하지만 새로 추가된 Routee에 해당 Message가 할당되는 것을 보장하지 않는다. **새로 Routee를 추가하는 중에 Idle이 되는 Routee가 있으면 기존 Routee에 Message가 할당된다.**
+
+===== Supervision
+
+* Router는 Routee의 Parent이기 때문에 Supervisor다.
+* Routee가 Fail하면 Router의 Parent한테 까지 escalate된다. 그래서 Router가 Restart되고 Children인 Routee들 까지 Restart된다. AllForOneStrategy 처럼 동작한다.
+* Fail한 Routee만 Restart하기:
+** 4.3.2에서 Actor의 기본 Strategy는 defaultStrategy라고 했었는데, Router는 그냥 escalate하는 건가? 이부분 확인해봐야 할 듯.
+
+[source, scala]
+----
+val myStrategy = SupervisorStrategy.defaultStrategy
+val router = system.actorOf(RoundRobinPool(
+    5,
+    supervisorStrategy = myStrategy // <1>
+    ).props(Props[TestSuper]), "roundrobinRouter")
+----
+<1> defaultStrategy로 넣어주면 끝.
+
+Router의 Parent의 Strategy를 사용해도 된다.
+
+기본적으로 Routee가 Terminate하면 그냥 그걸로 끝이고 새 Routee를 생성해주지 않는다. 모든 Routee가 Terminate하면 Router도 Terminate된다. 단, resizer를 쓰는 Router는 Routee의 최소 개수를 유지한다.
+
+==== 9.2.2 Akka Group router
+
+===== Creating Group
+
+Group Router는 Routee의 Lifecycle에 관여하지 않는다. Routee를 관리하는 Parent Actor는 별도로 만든다:
+
+.Listing 9.5 GetLicenseCreator is creating our routees
+[source, scala]
+----
+class GetLicenseCreator(nrActors: Int) extends Actor {
+    override def preStart() {
+        super.preStart()
+        (0 until  nrActors).map(nr => {
+            context.actorOf(Props[GetLicense], "GetLicense"+nr)
+        })
+    }
+    ...
+}
+
+system.actorOf(Props( new GetLicenseCreator(2)),"Creator")
+----
+
+====== Configuration
+
+.Listing 9.6 Configuration of the router using a group
+[source, scala]
+----
+akka.actor.deployment {
+    /groupRouter {
+        router = round-robin-group  // <1>
+        routees.paths = [   // <2>
+            "/user/Creator/GetLicense0",
+            "/user/Creator/GetLicense1"]
+    }
+}
+
+val router = system.actorOf(FromConfig.props(), "groupRouter") // <3>
+----
+<1> Round Robin Logic
+<2> Actor paths. "akka.tcp://AkkaSystemName@10.0.0.2:2552/user/Creator/GetLicense0"와 같은 URL을 쓰면 Remote Routee도 관리할 수 있다.
+<3> 짜짠 group Router.
+
+====== Code
+
+.Listing 9.7 Create a group router in code
+[source, scala]
+----
+val paths = List(
+    "/user/Creator/GetLicense0",
+    "/user/Creator/GetLicense1")
+
+val router = system.actorOf(
+    RoundRobinGroup(paths).props(), "groupRouter")
+----
+
+Group Router는 Routee가 Terminate됐는지 알지 못한다. Routee가 Terminate 됐어도 Router는 계속 Message를 보내려고 시도한다. Routee가 Terminate되면 새 Actor를 생성해야 한다:
+
+.Listing 9.8 Modified GetLicenseCreator to create new Actors when a routee terminates
+[source, scala]
+----
+class GetLicenseCreator(nrActors: Int) extends Actor {
+    override def preStart() {
+        super.preStart()
+        (0 until nrActors).map(nr => {
+            val child = context.actorOf(
+                Props(new GetLicense(nextStep)), "GetLicense"+nr)
+            context.watch(child) // <1>
+        })
+    }
+    def receive = {
+        case Terminated(child) => { // <2>
+            val newChild = context.actorOf(
+                Props(new GetLicense(nextStep)), child.path.name)
+            context.watch(newChild)
+        }
+    }
+}
+----
+<1> Monitoring.
+<2> Routee가 Terminate되면 같은 path의 actor를 새로 만든다.
+
+.Listing 9.9 Test the GetLicenseCreator which manages the routees
+[source, scala]
+----
+val endProbe = TestProbe()
+val creator = system.actorOf( // <1>
+    Props( new GetLicenseCreator2(2, endProbe.ref)),"Creator")
+
+val paths = List(
+    "/user/Creator/GetLicense0",
+    "/user/Creator/GetLicense1")
+
+val router = system.actorOf( // <2>
+    RoundRobinGroup(paths).props(), "groupRouter")
+
+router ! Broadcast(PoisonPill) // <3>
+Thread.sleep(100)
+
+val msg = PerformanceRoutingMessage(
+        ImageProcessing.createPhotoString(new Date(), 60, "123xyz"),
+        None,
+        None)
+
+//test if the routees respond
+router ! msg
+endProbe.expectMsgType[PerformanceRoutingMessage](1 second) // <4>
+----
+<1> Creator를 통해서 Routee를 만든다.
+<2> Group Router를 paths로 만든다.
+<3> 모든 Routee에 PoisonPill을 보낸다. Broadcast Router가 아니라고 해도 `Broadcast(PoisonPill)`을 사용하면 모든 Routee에 Broadcast할 수 있다.
+<4> Routee가 재생성 돼서 메시지를 처리했는지 확인!
+
+===== Dynamically Resize the Router Group
+
+아래의 메시지로 Group Router의 Routee를 관리한다:
+
+* `GetRoutees`: Router가 이 메시지를 받으면 알고 있는 Routee를 전부 sender에게 `Routees` 메시지로 응답한다.
+** `Routees`: GetRoutees의 Sender가 응답으로 받는 메시지
+** `GetRoutees`의 응답(`Routees`)을 받으면 `GetRoutees` 이전에 보낸 메시지는 잘 처리됐다는 것을 의미한다.
+* `AddRoutee(routee: Routee)`: routee를 추가하는 메시지
+* `RemoveRoutee(routee: Routee)`: routee를 삭제하는 메시지
+
+`GetRoutees`의 응답인 `Routees` 메시지:
+
+[source, scala]
+----
+case class Routees(routees: immutable.IndexedSeq[Routee]) {
+  def getRoutees: java.util.List[Routee] = ...
+}
+----
+
+이 Routees로 할 수 있는 일:
+
+* Router의 Routee가 모두 몇 개인지?
+* send 메소드로 Routee에 직접 메시지를 보내는 것.
+
+AddRoutee와 RemoteRoutee는 우리가 아는 ActorRef가 아니라 Routee 타입으로 Router에 보낸다:
+
+[source, scala]
+----
+trait Routee {
+  def send(message: Any, sender: ActorRef): Unit
+}
+----
+
+Akka에서 제공하는 Routee 구현체:
+
+* `ActorRefRoutee(ref: ActorRef)`: ActorRef를 Routee로 변환할 때 사용.
+*. 이 Routee로 추가하면 Router는 이 Routee에 watch한다.
+*. 그래서 Router는 Terminated 메시지를 받지만 Router가 해당 Routee의 Superviosor가 아니기 때문에 `akka.actor.DeathPactException`이 발생한다.
+*. 그래서 결국 Router가 Termiate된다.
+*. __그니까 쓰지마라__라는 거 겠지. 응?
+* `ActorSelectionRoutee(selection: ActorSelection)`: path로 Routee를 얻을 때 사용.
+** __이걸 기본으로 쓰면 될 것 같다.__
+* `SeveralRoutees(routees: immutable.IndexedSeq[Routee])`: 한번에 여러 Routee를 추가/삭제할 때 사용한다.
+
+.Listing 9.10 Example of a Routee Sizer for a group
+[source, scala]
+----
+class DynamicRouteeSizer(nrActors: Int,
+                         props: Props,
+                         router: ActorRef) extends Actor {
+    var nrChildren = nrActors
+    var childInstanceNr = 0
+
+    //restart children
+    override def preStart() {
+        super.preStart()
+        (0 until  nrChildren).map(nr => createRoutee()) // <1>
+    }
+
+    def createRoutee() { // <2>
+        childInstanceNr += 1
+        val child = context.actorOf(props, "routee" + childInstanceNr)
+        val selection = context.actorSelection(child.path)
+        router ! AddRoutee(ActorSelectionRoutee(selection))
+        context.watch(child)
+    }
+
+    def receive = {
+        case PreferredSize(size) => { // <3>
+            if (size < nrChildren) {
+                //remove
+                context.children.take(nrChildren - size).foreach(ref => {
+                    val selection = context.actorSelection(ref.path)
+                    router ! RemoveRoutee(ActorSelectionRoutee(selection))
+                })
+                router ! GetRoutees
+            } else {
+                (nrChildren until size).map(nr => createRoutee())
+            }
+            nrChildren = size
+        }
+
+        case routees: Routees => { // <4>
+            //translate Routees into a actorPath
+            import collection.JavaConversions._
+            var active = routees.getRoutees.map{ // <5>
+                case x: ActorRefRoutee => x.ref.path.toString
+                case x: ActorSelectionRoutee => x.selection.pathString
+            }
+
+            //process the routee list
+            for(routee <- context.children) {
+                val index = active.indexOf(routee.path.toStringWithoutAddress)
+                if (index >= 0) { // <6>
+                    active.remove(index)
+                } else { // <7>
+                    routee ! PoisonPill // <10>
+                }
+            }
+
+            //active contains the terminated routees
+            for (terminated <- active) { // <8>
+                val name = terminated.substring(terminated.lastIndexOf("/")+1)
+                val child = context.actorOf(props, name)
+                context.watch(child)
+            }
+        }
+
+        case Terminated(child) => router ! GetRoutees // <9>
+    }
+}
+----
+<1> 시작 할 때 nrActors 만큼 Actor를 만든다.
+<2> Actor를 만들고 Router에 등록한다.
+<3> Routee의 size를 메시지의 size로 재조정 한다. 넘치면 Router에서 삭제하고 모자르면 새로 만들어 Router에 추가한다. 마지막으로 GetRoutees를 보내서 받은 응답인 Routees 메시지를 보고 Routee Actor를 Terminate 시킨다.
+<4> GetRoutees의 응답인 Routees 메시지를 처리한다. Router의 Routee와 Children의 Actor가 다르면 Router에 맞춘다.
+<5> Routees 메시지를 Path의 List로 변환한다. Routee를 안전하게 Terminate 시키거나 Restart 시키려면 path가 필요하다. Routee Interface에는 send 밖에 없어서 구현체인 ActorRefRoutee, ActorSelectionRoutee를 이용해야 한다.
+<6> [children intersect router] Router에 들어 있는 actor는 그대로 둔다.
+<7> [children - router] Router에 없는 Routee는 Terminate 시킨다.
+<8> [router - children] Router에만 있는 Routee는 다시 만든다.
+<9> Routee가 Terminated 될 때마다 GetRoutees 메시지를 보내서 다시 확인한다.
+<10> Mailbox에 쌓인 Message를 전부 처리하고 Terminate하도록 PoisonPill을 보낸다.
+
+[NOTE]
+.stop vs PoisonPill vs Kill
+====
+* `stop` call: 현재 처리 중인 메시지가 끝나면 바로 Actor종료한다. Mailbox의 메시지는 버려진다.
+* `PoisonPill`: 이전에 보내진 Mailbox의 Message를 전부 처리하고 종료한다.
+* `Kill`: Kill 메시지를 받은 Actor는 ActorKilledException을 발생시킨다. 그래서 Supervision strategy에 따라서 Actor가 Handle된다. defaultStrategy에 따르면 ActorKilledException이 발생하면 `Stop`된다.
+====
+
+==== 9.2.3 ConsistentHashing router
+
+Scatter-Gather Pattern에서는 Task만 병렬로 처리 했었다. Gather인 Aggregator Pattern도 병렬로 처리하고 싶을 때 이 Router가 필요하다.
+
+image::img/figure-9-5.png[caption="Figure 9.5:", title="Steps the ConsistentHashing router follows to decide which routee to select"]
+
+NOTE: 근데 여기 Virtual node는 뭐지?
+
+메시지 key를 구하는 세 가지 방법:
+
+* Partial Function: Router에 Partial Function을 넘겨준다.
+* `akka.routing.ConsistentHashingRouter.ConsistentHashable`: Message가  ConsistentHashable을 구현한다.
+* `akka.routing.ConsistentHashingRouter.ConsistentHashableEnvelope`: Sender가 Message를 이 인스턴스에 실어서 보낸다. 이 때 Message Key를 Sender가 구해서 넣어준다.
+** 이 방법은 Sender가 Routee에 closely coupled 돼 버리기 때문에 선호하지 않는다.
+
+===== Simple Gather
+
+HashMapping을 살펴보기 전에 간단한 Aggregator Pattern을 보자:
+
+.Listing 9.11 Joining two message into one
+[source, scala]
+----
+trait GatherMessage {
+    val id:String
+    val values:Seq[String]
+}
+
+case class GatherMessageNormalImpl(id:String, values:Seq[String])
+        extends GatherMessage
+
+class SimpleGather(nextStep: ActorRef) extends Actor {
+    var messages = Map[String, GatherMessage]()
+
+    def receive = {
+        case msg: GatherMessage =>
+            messages.get(msg.id) match {
+                case Some(previous) =>
+                    //join
+                    nextStep ! GatherMessageWithoutHash(
+                                msg.id,
+                                previous.values ++ msg.values)
+                    messages -= msg.id
+
+                case None => messages += msg.id -> msg
+            }
+    }
+}
+----
+
+단순히 id로 들어온 메시지를 합친다.
+
+===== Router Using A HashMapping
+
+Router에 Partial Function 넘기기:
+
+[source, scala]
+----
+def hashMapping: ConsistentHashMapping = {
+    case msg: GatherMessage => msg.id
+}
+
+val router = system.actorOf(ConsistentHashingPool(10,
+    virtualNodesFactor = 10,
+    hashMapping = hashMapping).props(
+        Props(new SimpleGather(endProbe.ref))), name = "routerMapping")
+----
+
+Test:
+
+[source, scala]
+----
+router ! GatherMessageNormalImpl("1", Seq("msg1"))
+router ! GatherMessageNormalImpl("1", Seq("msg2"))
+endProbe.expectMsg(GatherMessageNormalImpl("1",Seq("msg1","msg2")))
+----
+
+===== Messages Has An HashMapping
+
+`akka.routing.ConsistentHashingRouter.ConsistentHashable` 구현하기:
+
+[source, scala]
+----
+case class GatherMessageWithHash(id:String, values:Seq[String])
+        extends GatherMessage with ConsistentHashable {
+
+    override def consistentHashKey: Any = id
+}
+----
+
+Test:
+
+[source, scala]
+----
+val router = system.actorOf(
+    ConsistentHashingPool(10, virtualNodesFactor = 10).
+        props(Props(new SimpleGather(endProbe.ref))),
+    name = "routerMessage")
+
+router ! GatherMessageWithHash("1", Seq("msg1"))
+router ! GatherMessageWithHash("1", Seq("msg2"))
+endProbe.expectMsg(GatherMessageNormalImpl("1",Seq("msg1","msg2")))
+----
+
+===== Sender Has An HashMapping
+
+`akka.routing.ConsistentHashingRouter.ConsistentHashableEnvelope` 사용하기:
+
+[source, scala]
+----
+val router = system.actorOf(
+    ConsistentHashingPool(10, virtualNodesFactor = 10).
+        props(Props(new SimpleGather(endProbe.ref))),
+    name = "routerMessage")
+
+router ! ConsistentHashableEnvelope(
+        message = GatherMessageNormalImpl("1", Seq("msg1")),
+        hashKey = "1")
+router ! ConsistentHashableEnvelope(
+        message = GatherMessageNormalImpl("1", Seq("msg2")),
+        hashKey = "1")
+
+endProbe.expectMsg(GatherMessageNormalImpl("1",Seq("msg1","msg2")))
+----
+
+=== 9.3 Implementing the router pattern using Actors
+
+지금까지 Akka에 구현된 Router를 살펴봤고 이제 직접 Router를 만들어보자.
+
+==== 9.3.1 Content based routing
+
+Message 내용에 따라 하는 Routing. 8장에서 본 Speed Check 예제가 이에 해당된다:
+
+image::img/figure-9-6.png[caption="Figure 9.6:", title="Routing based on the value of the speed"]
+
+==== 9.3.2 State based routing
+
+Router의 상태에 따라 하는 Routing. 여기서 소개하는 예는 on, off 상태가 있어서 on 일 때는 normal flow, off 일 때는 cleanup flow로 routing하는 예제를 보여준다.
+
+.Listing 9.12 State based Router
+[source, scala]
+----
+case class RouteStateOn() // <1>
+case class RouteStateOff() // <2>
+
+class SwitchRouter(normalFlow: ActorRef, cleanUp: ActorRef)
+        extends Actor with ActorLogging {
+    def on: Receive = {
+        case RouteStateOn =>
+            log.warning("Received on while already in on state")
+        case RouteStateOff => context.unbecome() // <3>
+        case msg: AnyRef =>
+            normalFlow ! msg // <4>
+    }
+
+    def off: Receive = {
+        case RouteStateOn => context.become(on) // <5>
+        case RouteStateOff =>
+            log.warning("Received off while already in off state")
+        case msg: AnyRef =>
+            cleanUp ! msg   // <6>
+    }
+
+    def receive = {
+        case msg: AnyRef => off(msg) // <7>
+    }
+}
+----
+<1> SwitchRouter의 상태를 on으로 변경하는 메시지
+<2> SwitchRouter의 상태를 off로 변경하는 메시지
+<3> on 상태에서 RouteStateOff 메시지를 받으면 off 상태로 변경한다.
+<4> on 상태에서는 normalFlow에 메시지를 forward!!
+<5> off 상태에서는 RouteStateOn 메시지를 받으면 on 상태로 변경한다.
+<6> off 상태에서는 cleanUp에 메시지를 forward!!
+<7> default는 off. default receive는 이렇게 설정하는 게 best practice인가?
+
+[NOTE]
+====
+책에서는 become으로 off 상태로 변경했다가 unbecome으로 변경하는 예제를 보여준다. become/unbecome은 일종의 stack이고 become만 쓰는게 아니라 unbecome을 사용하라고 권장된다.
+
+become만 사용하면 안되는 이유는 뭘까?
+====
+
+==== 9.3.3 Router Implementations
+
+GetSpeed Actor는 두 가지 일을 한다:
+
+. A processing task: Speed를 가져온다.
+. A Router Pattern: Speed에 따라 CleanUp task로 보내든지, GetTime task로 보내든지 한다.
+
+image::img/figure-9-7.png[caption="Figure 9.7:", title="Multiple pattern Implementation"]
+
+이 두 가지를 하나의 Actor로 구현할 수도 있고 각각 GetSpeed Actor랑 Router Actor로 나눠 구현할 수도 있다. 이는 reusability에 달렸다.
+
+==== 9.3.4 Routing slip pattern
+
+"Routing slip pattern"은 "Dynamic Pipes and Filters Pattern"이라고 할 수 있다. "Pipe and Filter Pattern"은 Task의 Pipeline이 하드코딩 했었다. 하지만 이 패턴에서는 Slip Router에서 Pipeline을 동적으로 생성한다.
+
+이 책에서는 Car factory 예제를 살펴본다:
+
+image::img/figure-9-8.png[caption="Figure 9.8:", title="Routing slip example"]
+
+Slip Router에서 받는 메시지:
+
+[source, scala]
+----
+object CarOptions extends Enumeration {
+    val CAR_COLOR_GRAY, NAVIGATION, PARKING_SENSORS = Value
+}
+
+case class Order(options: Seq[CarOptions.Value])
+
+case class Car(color: String = "",
+               hasNavigation: Boolean = false,
+               hasParkingSensors: Boolean = false)
+----
+
+Task Actor는 Routing Slip을 사용해서 다음 Task Actor로 넘긴다:
+
+.Listing 9.15 Routing messages
+[source, scala]
+----
+case class RouteSlipMessage(routeSlip: Seq[ActorRef], // <1>
+                            message: AnyRef)
+
+trait RouteSlip {
+    def sendMessageToNextTask(routeSlip: Seq[ActorRef], //<4>
+                                message: AnyRef) {
+        val nextTask = routeSlip.head
+        val newSlip = routeSlip.tail
+
+        if (newSlip.isEmpty) {
+            nextTask ! message // <2>
+        } else {
+            nextTask ! RouteSlipMessage( // <3>
+                routeSlip = newSlip,
+                message = message)
+        }
+    }
+}
+----
+<1> routeSlip이 pipeline이고 message가 실제 메시지다.
+<2> 다 끝났으니 결과를 돌려준다.
+<3> 다음 Task로 보낸다.
+<4> 마지막 결과를 받는 Actor는 Task가 아니기 때문에 routeSlip은 `List[ActorRef]`가 된다.
+
+.Listing 9.16 Example Tasks
+[source, scala]
+----
+class PaintCar(color: String) extends Actor with RouteSlip {
+    def receive = {
+        case RouteSlipMessage(routeSlip, car: Car) =>
+            sendMessageToNextTask(routeSlip,
+                car.copy(color = color))
+    }
+}
+
+class AddNavigation() extends Actor with RouteSlip {
+    def receive = {
+        case RouteSlipMessage(routeSlip, car: Car) =>
+            sendMessageToNextTask(routeSlip,
+                car.copy(hasNavigation = true))
+
+    }
+
+class AddParkingSensors() extends Actor with RouteSlip {
+    def receive = {
+        case RouteSlipMessage(routeSlip, car: Car) =>
+            sendMessageToNextTask(routeSlip,
+                car.copy(hasParkingSensors = true))
+    }
+}
+----
+
+.Listing 9.17 SlipRouter
+[source, scala]
+----
+class SlipRouter(endStep: ActorRef) extends Actor with RouteSlip {
+    val paintBlack = context.actorOf(
+        Props(new PaintCar("black")), "paintBlack")
+    val paintGray = context.actorOf(
+        Props(new PaintCar("gray")), "paintGray")
+    val addNavigation = context.actorOf(
+        Props[AddNavigation], "navigation")
+    val addParkingSensor = context.actorOf(
+        Props[AddParkingSensors], "parkingSensors")
+
+    def receive = {
+        case order: Order =>
+            val routeSlip = createRouteSlip(order.options)
+
+            sendMessageToNextTask(routeSlip, new Car) // route slip
+    }
+
+    private def createRouteSlip(
+            options: Seq[CarOptions.Value]): Seq[ActorRef] = {
+
+        val routeSlip = new ListBuffer[ActorRef]
+
+        //car needs a color
+        if (!options.contains(CarOptions.CAR_COLOR_GRAY)) {
+            routeSlip += paintBlack
+        }
+
+        options.foreach {
+            case CarOptions.CAR_COLOR_GRAY  => routeSlip += paintGray
+            case CarOptions.NAVIGATION      => routeSlip += addNavigation
+            case CarOptions.PARKING_SENSORS => routeSlip += addParkingSensor
+            case other => // do nothing
+        }
+
+        routeSlip += endStep
+        routeSlip
+    }
+}
+----
+
+==== Creating Car
+
+.Listing 9.18 Create default car
+[source, scala]
+----
+val probe = TestProbe()
+val router = system.actorOf(
+    Props(new SlipRouter(probe.ref)), "SlipRouter")
+
+val minimalOrder = new Order(Seq())
+
+router ! minimalOrder
+
+val defaultCar = new Car(
+    color = "black",
+    hasNavigation = false,
+    hasParkingSensors = false)
+
+probe.expectMsg(defaultCar)
+----
+
+.Listing 9.19 Create car with all options
+[source, scala]
+----
+val fullOrder = new Order(Seq(
+    CarOptions.CAR_COLOR_GRAY,
+    CarOptions.NAVIGATION,
+    CarOptions.PARKING_SENSORS))
+
+router ! fullOrder
+
+val carWithAllOptions = new Car(
+    color = "gray",
+    hasNavigation = true,
+    hasParkingSensors = true)
+
+probe.expectMsg(carWithAllOptions)
+----
+
+
+=== 9.4 Summary
+
+Akka 잘났다.
