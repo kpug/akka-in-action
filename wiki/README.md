@@ -11,5 +11,9 @@
 
 # 그밖의 자료
 
+* [Akka를 이용한 Concurrent 프로그래밍 시작하기](http://javacan.tistory.com/169)
 * [Chain of Responsibility 패턴](http://egloos.zum.com/iilii/v/3863886)
 * [Introducing Actors](http://rerun.me/2014/09/11/introducing-actors-akka-notes-part-1/)
+* [Event sourcing](http://martinfowler.com/eaaDev/EventSourcing.html)
+* [Enterprise Pattern](http://martinfowler.com/eaaDev/)
+* [Typesafe youtube Channel](https://www.youtube.com/user/typesafehub)
