@@ -17,3 +17,5 @@
 * [Event sourcing](http://martinfowler.com/eaaDev/EventSourcing.html)
 * [Enterprise Pattern](http://martinfowler.com/eaaDev/)
 * [Typesafe youtube Channel](https://www.youtube.com/user/typesafehub)
+* [Akka Refcards](https://dzone.com/refcardz/reactive-programming-akka)
+* [Event Sourcing](http://martinfowler.com/eaaDev/EventSourcing.html)
