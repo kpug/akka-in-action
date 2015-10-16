@@ -19,3 +19,4 @@
 * [Typesafe youtube Channel](https://www.youtube.com/user/typesafehub)
 * [Akka Refcards](https://dzone.com/refcardz/reactive-programming-akka)
 * [Event Sourcing](http://martinfowler.com/eaaDev/EventSourcing.html)
+* [Scala Lens Library](https://1ambda.github.io/scala-monocle-tutorial/)
