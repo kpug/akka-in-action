@@ -9,6 +9,11 @@
   - [예제 수행하기](https://github.com/kpug/akka/blob/master/wiki/2.%20Up-and-running.md#예제-수행하기)
   - [예제 프로그램 설명](https://github.com/kpug/akka/blob/master/wiki/2.%20Up-and-running.md#예제-애플리케이션-설명)
 
+- [3. Test-driven development with Actors](https://github.com/kpug/akka/blob/master/wiki/3-test-driven-development-with-actors.asc#3-test-driven-development-with-actors)
+  - [Testing Actors](https://github.com/kpug/akka/blob/master/wiki/3-test-driven-development-with-actors.asc#31-testing-actors)
+  - [One-way message](https://github.com/kpug/akka/blob/master/wiki/3-test-driven-development-with-actors.asc#32-one-way-messages)
+  - [Two-way messages](https://github.com/kpug/akka/blob/master/wiki/3-test-driven-development-with-actors.asc#33-two-way-messages)
+
 # 그밖의 자료
 
 * [Akka를 이용한 Concurrent 프로그래밍 시작하기](http://javacan.tistory.com/169)
