@@ -14,6 +14,18 @@
   - [One-way message](https://github.com/kpug/akka/blob/master/wiki/3-test-driven-development-with-actors.asc#32-one-way-messages)
   - [Two-way messages](https://github.com/kpug/akka/blob/master/wiki/3-test-driven-development-with-actors.asc#33-two-way-messages)
 
+- [4.Fault tolerance](https://github.com/kpug/akka/blob/master/wiki/4-fault-tolerance.asc#fault-tolerance)
+  - [4.1 What fault tolerance is](https://github.com/kpug/akka/blob/master/wiki/4-fault-tolerance.asc#41-what-fault-tolerance-is-and-what-it-isnt)
+  - [4.2 Actor Lifecycle](https://github.com/kpug/akka/blob/master/wiki/4-fault-tolerance.asc#42-actor-lifecycle)
+  - [4.3 Supervision](https://github.com/kpug/akka/blob/master/wiki/4-fault-tolerance.asc#43-supervision)
+
+- [5. Future](https://github.com/kpug/akka/blob/master/wiki/5.%20Futures.md)
+
+- [6. Your first distributed akka app](https://github.com/kpug/akka/blob/master/wiki/6-your-first-distributed-akka-app.asc#your-first-distributed-akka-app)
+  - [6.1 Scaling Out](https://github.com/kpug/akka/blob/master/wiki/6-your-first-distributed-akka-app.asc#61-scaling-out)
+  - [6.2 Scaling Out with Remoting](https://github.com/kpug/akka/blob/master/wiki/6-your-first-distributed-akka-app.asc#62-scaling-out-with-remoting)
+  
+
 # 그밖의 자료
 
 * [Akka를 이용한 Concurrent 프로그래밍 시작하기](http://javacan.tistory.com/169)
