@@ -24,7 +24,7 @@
 - [6. Your first distributed akka app](https://github.com/kpug/akka/blob/master/wiki/6-your-first-distributed-akka-app.asc#your-first-distributed-akka-app)
   - [6.1 Scaling Out](https://github.com/kpug/akka/blob/master/wiki/6-your-first-distributed-akka-app.asc#61-scaling-out)
   - [6.2 Scaling Out with Remoting](https://github.com/kpug/akka/blob/master/wiki/6-your-first-distributed-akka-app.asc#62-scaling-out-with-remoting)
-  
+- [7. Configuration, logging, and deployment](https://github.com/kpug/akka/blob/master/wiki/7-configuration-logging-and-deployment.asc)
 
 # 그밖의 자료
 
