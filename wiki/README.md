@@ -25,7 +25,18 @@
   - [6.1 Scaling Out](https://github.com/kpug/akka/blob/master/wiki/6-your-first-distributed-akka-app.asc#61-scaling-out)
   - [6.2 Scaling Out with Remoting](https://github.com/kpug/akka/blob/master/wiki/6-your-first-distributed-akka-app.asc#62-scaling-out-with-remoting)
 - [7. Configuration, logging, and deployment](https://github.com/kpug/akka/blob/master/wiki/7-configuration-logging-and-deployment.asc)
+  - [7.1 Configuration](https://github.com/kpug/akka/blob/master/wiki/7-configuration-logging-and-deployment.asc#7l-configuration)
+  - [7.2 Logging](https://github.com/kpug/akka/blob/master/wiki/7-configuration-logging-and-deployment.asc#72-logging)
+  - [7.3 Deploying Actor-based Applications](https://github.com/kpug/akka/blob/master/wiki/7-configuration-logging-and-deployment.asc#73-deploying-actor-based-applications)
 
+- [8. System Structure](https://github.com/kpug/akka/blob/master/wiki/8-system-structure.asc)
+  - [8.1 Pipes and Filters](https://github.com/kpug/akka/blob/master/wiki/8-system-structure.asc#81-pipes-and-filters)
+  - [8.2 Scatter-Gather Pattern](https://github.com/kpug/akka/blob/master/wiki/8-system-structure.asc#82-scatter-gather-pattern)
+- [9. Routing Messages](https://github.com/kpug/akka/blob/master/wiki/9-routing-messages.asc)
+  - [9.1 The Enterprise Integration Router Pattern](https://github.com/kpug/akka/blob/master/wiki/9-routing-messages.asc#91-the-enterprise-integration-router-pattern)
+  - [9.2 Balance load using Akka routers](https://github.com/kpug/akka/blob/master/wiki/9-routing-messages.asc#92-balance-load-using-akka-routers)
+  - [9.3 Implementing the router pattern using Actors](https://github.com/kpug/akka/blob/master/wiki/9-routing-messages.asc#93-implementing-the-router-pattern-using-actors)
+  
 # 그밖의 자료
 
 * [Akka를 이용한 Concurrent 프로그래밍 시작하기](http://javacan.tistory.com/169)
