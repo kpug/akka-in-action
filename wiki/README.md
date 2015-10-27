@@ -36,7 +36,14 @@
   - [9.1 The Enterprise Integration Router Pattern](https://github.com/kpug/akka/blob/master/wiki/9-routing-messages.asc#91-the-enterprise-integration-router-pattern)
   - [9.2 Balance load using Akka routers](https://github.com/kpug/akka/blob/master/wiki/9-routing-messages.asc#92-balance-load-using-akka-routers)
   - [9.3 Implementing the router pattern using Actors](https://github.com/kpug/akka/blob/master/wiki/9-routing-messages.asc#93-implementing-the-router-pattern-using-actors)
-  
+- [10. Message Channels](https://github.com/kpug/akka/blob/master/wiki/10.%20Message%20Channels.md)
+  - [10.1 Channel types](https://github.com/kpug/akka/blob/master/wiki/10.%20Message%20Channels.md#channel-types)
+  - [10.2 Specialized channels](https://github.com/kpug/akka/blob/master/wiki/10.%20Message%20Channels.md#102-specialized-channels)
+- [11. Finite state machines and agents](https://github.com/kpug/akka/blob/master/wiki/11.%20Finite%20state%20machines%20and%20agents.md)
+  - [11.1 finite state machine](https://github.com/kpug/akka/blob/master/wiki/11.%20Finite%20state%20machines%20and%20agents.md#111-finite-state-machine-사용하기)
+  - [11.2  Implementation of an FSM model](https://github.com/kpug/akka/blob/master/wiki/11.%20Finite%20state%20machines%20and%20agents.md#112-fsm-모델의-구현체)
+  - [11.3 Implement shared state using agents](https://github.com/kpug/akka/blob/master/wiki/11.%20Finite%20state%20machines%20and%20agents.md#113-agents를-사용하여-공유-상태-구현하기)
+
 # 그밖의 자료
 
 * [Akka를 이용한 Concurrent 프로그래밍 시작하기](http://javacan.tistory.com/169)
