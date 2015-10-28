@@ -43,6 +43,10 @@
   - [11.1 finite state machine](https://github.com/kpug/akka/blob/master/wiki/11.%20Finite%20state%20machines%20and%20agents.md#111-finite-state-machine-사용하기)
   - [11.2  Implementation of an FSM model](https://github.com/kpug/akka/blob/master/wiki/11.%20Finite%20state%20machines%20and%20agents.md#112-fsm-모델의-구현체)
   - [11.3 Implement shared state using agents](https://github.com/kpug/akka/blob/master/wiki/11.%20Finite%20state%20machines%20and%20agents.md#113-agents를-사용하여-공유-상태-구현하기)
+- [12. System Integration](https://github.com/kpug/akka/blob/master/wiki/12-system-integrations.asc)
+  - [12.1 Message endpoints](https://github.com/kpug/akka/blob/master/wiki/12-system-integrations.asc#121-message-endpoints)
+  - [12.2 Implementing endpoints using the Camel framework](https://github.com/kpug/akka/blob/master/wiki/12-system-integrations.asc#122-implementing-endpoints-using-the-camel-framework)
+  - [12.3 The REST example](https://github.com/kpug/akka/blob/master/wiki/12-system-integrations.asc#1231-the-rest-example)
 
 # 그밖의 자료
 
