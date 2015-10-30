@@ -23,7 +23,6 @@
   - [7.1 Configuration](https://github.com/kpug/akka/blob/master/wiki/7-configuration-logging-and-deployment.asc#7l-configuration)
   - [7.2 Logging](https://github.com/kpug/akka/blob/master/wiki/7-configuration-logging-and-deployment.asc#72-logging)
   - [7.3 Deploying Actor-based Applications](https://github.com/kpug/akka/blob/master/wiki/7-configuration-logging-and-deployment.asc#73-deploying-actor-based-applications)
-
 - [8. System Structure](https://github.com/kpug/akka/blob/master/wiki/8-system-structure.asc)
   - [8.1 Pipes and Filters](https://github.com/kpug/akka/blob/master/wiki/8-system-structure.asc#81-pipes-and-filters)
   - [8.2 Scatter-Gather Pattern](https://github.com/kpug/akka/blob/master/wiki/8-system-structure.asc#82-scatter-gather-pattern)
