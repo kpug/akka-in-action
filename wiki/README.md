@@ -47,6 +47,14 @@
   - [12.1 Message endpoints](https://github.com/kpug/akka/blob/master/wiki/12-system-integrations.asc#121-message-endpoints)
   - [12.2 Implementing endpoints using the Camel framework](https://github.com/kpug/akka/blob/master/wiki/12-system-integrations.asc#122-implementing-endpoints-using-the-camel-framework)
   - [12.3 The REST example](https://github.com/kpug/akka/blob/master/wiki/12-system-integrations.asc#1231-the-rest-example)
+- [13. Clustering](https://github.com/kpug/akka/blob/master/wiki/13-clustering.asc)
+  - [13.1 Why use clustering?](https://github.com/kpug/akka/blob/master/wiki/13-clustering.asc#131-why-use-clustering)
+  - [13.2 Cluster memebership](https://github.com/kpug/akka/blob/master/wiki/13-clustering.asc#132-cluster-membership)
+  - [13.3 Clustered job processing](https://github.com/kpug/akka/blob/master/wiki/13-clustering.asc#133-clustered-job-processing)
+- [14 Actor persistence](https://github.com/kpug/akka/blob/master/wiki/14-actor-persistence.asc)
+  - [14.1 Recovering state with event sourcing](https://github.com/kpug/akka/blob/master/wiki/14-actor-persistence.asc#141-recovering-state-with-event-sourcing)
+  - [14.2 Persistent actors](https://github.com/kpug/akka/blob/master/wiki/14-actor-persistence.asc#142-persistent-actors)
+  - [14.3 Clustered persistence](https://github.com/kpug/akka/blob/master/wiki/14-actor-persistence.asc#143-clustered-persistence)
 
 # 그밖의 자료
 
